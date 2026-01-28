@@ -1,15 +1,13 @@
 import { h } from 'preact';
-import { useState, useEffect } from 'preact/hooks';
+import { useState } from 'preact/hooks';
 import htm from 'htm';
-import { Storage } from '../lib/storage.js';
-
 const html = htm.bind(h);
 
 export const Settings = ({ data, setData }) => {
     if (!data || !data.settings) {
         return html`<div class="p-12 text-center text-slate-400 font-bold">Initializing Settings...</div>`;
     }
-
+    
     const [updating, setUpdating] = useState(false);
     const [showImportModal, setShowImportModal] = useState(false);
     const [pendingImportData, setPendingImportData] = useState(null);
@@ -21,16 +19,71 @@ export const Settings = ({ data, setData }) => {
         settings: true,
         modules: true
     });
+    const [selectedGradeForFees, setSelectedGradeForFees] = useState(data.settings.grades?.[0] || 'GRADE 1');
+    const [showAddFeeModal, setShowAddFeeModal] = useState(false);
+    const [newFeeItem, setNewFeeItem] = useState({ 
+        key: '', 
+        label: '', 
+        category: 'optional',
+        defaultAmount: 0 
+    });
     
-    const [localSettings, setLocalSettings] = useState(data.settings);
-    useEffect(() => {
-        setLocalSettings(data.settings || {});
-    }, [data.settings]);
-    const settings = localSettings;
+    const settings = data.settings;
+
+    // Format fee labels for display
+    const formatFeeLabel = (key) => {
+        const labels = {
+            'admission': 'Admission Fee',
+            'diary': 'School Diary',
+            'development': 'Development Fee',
+            't1': 'Term 1 Tuition',
+            't2': 'Term 2 Tuition',
+            't3': 'Term 3 Tuition',
+            'boarding': 'Boarding Fee',
+            'breakfast': 'Breakfast',
+            'lunch': 'Lunch',
+            'trip': 'Educational Trip',
+            'bookFund': 'Book Fund',
+            'caution': 'Caution Money',
+            'uniform': 'Uniform',
+            'studentCard': 'Student ID Card',
+            'remedial': 'Remedial Classes',
+            'assessmentFee': 'Examination Fee',
+            'projectFee': 'Project Fee'
+        };
+        return labels[key] || key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+    };
+
+    // Categorize fees
+    const getFeeCategory = (key) => {
+        if (['admission', 't1', 't2', 't3'].includes(key)) return 'tuition';
+        if (['diary', 'development', 'bookFund', 'caution', 'studentCard', 'assessmentFee'].includes(key)) return 'mandatory';
+        if (['boarding', 'breakfast', 'lunch', 'trip', 'uniform', 'remedial', 'projectFee'].includes(key)) return 'optional';
+        return 'misc';
+    };
+
+    // Get all fee keys from selected grade structure
+    const getFeeItemsForGrade = () => {
+        const structure = settings.feeStructures?.find(f => f.grade === selectedGradeForFees);
+        if (!structure) return [];
+        
+        return Object.keys(structure)
+            .filter(key => !['grade', 'id'].includes(key))
+            .map(key => ({
+                key,
+                label: formatFeeLabel(key),
+                category: getFeeCategory(key),
+                amount: structure[key] || 0
+            }))
+            .sort((a, b) => {
+                const categoryOrder = { tuition: 1, mandatory: 2, optional: 3, misc: 4 };
+                return categoryOrder[a.category] - categoryOrder[b.category] || a.label.localeCompare(b.label);
+            });
+    };
 
     const updateFee = (grade, field, val) => {
         const newStructures = (settings.feeStructures || []).map(f => 
-            f.grade === grade ? { ...f, [field]: Number(val) } : f
+            f.grade === grade ? { ...f, [field]: Number(val) || 0 } : f
         );
         setData({
             ...data,
@@ -38,11 +91,74 @@ export const Settings = ({ data, setData }) => {
         });
     };
 
+    const handleAddFeeItem = () => {
+        if (!newFeeItem.key || !newFeeItem.label) {
+            alert('Please enter both key and label');
+            return;
+        }
+        
+        // Validate key format (alphanumeric + underscores only)
+        if (!/^[a-z0-9_]+$/.test(newFeeItem.key)) {
+            alert('Fee key must be lowercase letters, numbers, or underscores only (no spaces)');
+            return;
+        }
+
+        // Check for duplicate key
+        const allKeys = new Set();
+        settings.feeStructures?.forEach(structure => {
+            Object.keys(structure).forEach(key => {
+                if (!['grade', 'id'].includes(key)) allKeys.add(key);
+            });
+        });
+        
+        if (allKeys.has(newFeeItem.key)) {
+            alert(`Fee key "${newFeeItem.key}" already exists!`);
+            return;
+        }
+
+        // Add to all grade structures
+        const updatedStructures = data.settings.feeStructures.map(structure => ({
+            ...structure,
+            [newFeeItem.key]: Number(newFeeItem.defaultAmount) || 0
+        }));
+
+        setData({
+            ...data,
+            settings: {
+                ...data.settings,
+                feeStructures: updatedStructures
+            }
+        });
+
+        // Reset modal
+        setNewFeeItem({ key: '', label: '', category: 'optional', defaultAmount: 0 });
+        setShowAddFeeModal(false);
+        alert(`✅ Fee item "${newFeeItem.label}" added successfully to all grades!`);
+    };
+
+    const handleDeleteFeeItem = (key) => {
+        if (!confirm(`⚠️ Delete fee item "${formatFeeLabel(key)}"?\n\nThis will remove it from ALL grade structures permanently.`)) return;
+        
+        const updatedStructures = data.settings.feeStructures.map(structure => {
+            const newStructure = { ...structure };
+            delete newStructure[key];
+            return newStructure;
+        });
+
+        setData({
+            ...data,
+            settings: {
+                ...data.settings,
+                feeStructures: updatedStructures
+            }
+        });
+        
+        alert(`✅ Fee item "${formatFeeLabel(key)}" deleted successfully!`);
+    };
+
     const handleUpdateProfile = () => {
-        // Apply local settings to global data when saving
         setUpdating(true);
-        setData({ ...data, settings: { ...settings } });
-        setTimeout(() => setUpdating(false), 1000);
+        setTimeout(() => setUpdating(false), 1500);
     };
 
     const handleImageUpload = async (e, field) => {
@@ -60,26 +176,6 @@ export const Settings = ({ data, setData }) => {
             alert('Failed to upload image. Please try again.');
         }
     };
-
-    const feeColumns = [
-        { key: 'admission', label: 'Adm' },
-        { key: 'diary', label: 'Diary' },
-        { key: 'development', label: 'Dev' },
-        { key: 't1', label: 'T1' },
-        { key: 't2', label: 'T2' },
-        { key: 't3', label: 'T3' },
-        { key: 'boarding', label: 'Board' },
-        { key: 'breakfast', label: 'Brkfast' },
-        { key: 'lunch', label: 'Lunch' },
-        { key: 'trip', label: 'Trip' },
-        { key: 'bookFund', label: 'Books' },
-        { key: 'caution', label: 'Caution' },
-        { key: 'uniform', label: 'Uniform' },
-        { key: 'studentCard', label: 'Card' },
-        { key: 'remedial', label: 'Remed' },
-        { key: 'assessmentFee', label: 'Exam' },
-        { key: 'projectFee', label: 'Project' }
-    ];
 
     const handleExport = () => {
         const dataStr = JSON.stringify(data, null, 2);
@@ -107,7 +203,7 @@ export const Settings = ({ data, setData }) => {
             }
         };
         reader.readAsText(file);
-        e.target.value = ''; // Reset input
+        e.target.value = '';
     };
 
     const processImport = () => {
@@ -133,7 +229,6 @@ export const Settings = ({ data, setData }) => {
         if (importSelections.settings) {
             newData.settings = { 
                 ...pendingImportData.settings,
-                // Keep logo if not provided in import
                 schoolLogo: pendingImportData.settings?.schoolLogo || settings.schoolLogo
             };
         }
@@ -147,6 +242,14 @@ export const Settings = ({ data, setData }) => {
         setPendingImportData(null);
         alert('Selected data has been imported successfully!');
     };
+
+    // Category configuration
+    const feeCategories = [
+        { id: 'tuition', name: '🎓 Tuition & Admission', color: 'bg-blue-500', bg: 'bg-blue-50', border: 'border-blue-200' },
+        { id: 'mandatory', name: '✅ Mandatory Charges', color: 'bg-green-500', bg: 'bg-green-50', border: 'border-green-200' },
+        { id: 'optional', name: '⭐ Optional Services', color: 'bg-purple-500', bg: 'bg-purple-50', border: 'border-purple-200' },
+        { id: 'misc', name: '📦 Miscellaneous', color: 'bg-orange-500', bg: 'bg-orange-50', border: 'border-orange-200' }
+    ];
 
     return html`
         <div class="space-y-8 pb-20">
@@ -240,45 +343,6 @@ export const Settings = ({ data, setData }) => {
                     </div>
                 </div>
 
-                <div class="bg-white p-6 rounded-2xl shadow-sm border border-orange-100 bg-gradient-to-br from-white to-orange-50/30">
-                    <h3 class="font-bold mb-4 flex items-center gap-2 text-orange-800">
-                        <span class="w-4 h-4 bg-orange-500 rounded text-white flex items-center justify-center text-[10px]">📅</span>
-                        Academic Year Transition
-                    </h3>
-                    <div class="space-y-4">
-                        <p class="text-xs text-slate-500 leading-relaxed">
-                            Closing the current academic year will create a read-only <b>Archive Snapshot</b> of all marks, payments, and payroll records. This will clear active academic data to provide a clean slate for the next year.
-                        </p>
-                        <div class="flex flex-col sm:flex-row items-center gap-3">
-                            <div class="flex-1 w-full">
-                                <label class="text-[10px] font-black text-slate-400 uppercase mb-1 block">Target Next Year</label>
-                                <select 
-                                    id="nextYearSelect"
-                                    class="w-full p-3 bg-white border border-orange-200 rounded-xl outline-none font-black text-orange-900"
-                                >
-                                    ${Array.from({ length: 10 }, (_, i) => {
-                                        const year = 2024 + i;
-                                        return html`<option value="${year}/${year + 1}">${year}/${year + 1}</option>`;
-                                    })}
-                                </select>
-                            </div>
-                            <button 
-                                onClick=${() => {
-                                    const nextYear = document.getElementById('nextYearSelect').value;
-                                    if(confirm(`WARNING: This will ARCHIVE all current marks and payments for ${settings.academicYear} and RESET for ${nextYear}. Proceed?`)) {
-                                        const newData = Storage.archiveYear(data, nextYear);
-                                        setData(newData);
-                                        alert('Academic year closed successfully! You can access the records in the Archives menu.');
-                                    }
-                                }}
-                                class="w-full sm:w-auto px-6 py-4 bg-orange-600 text-white rounded-xl font-black text-sm shadow-lg shadow-orange-100 hover:bg-orange-700 transition-all shrink-0"
-                            >
-                                Close Year & Archive
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
                     <h3 class="font-bold mb-4 flex items-center gap-2">
                         <span class="w-4 h-4 bg-purple-500 rounded text-white flex items-center justify-center text-[10px]">K</span>
@@ -306,77 +370,127 @@ export const Settings = ({ data, setData }) => {
                     </div>
                 </div>
 
-                <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-                    <h3 class="font-bold mb-6">Fee Structure per Grade (${settings.currency})</h3>
-                    <div class="overflow-x-auto no-scrollbar">
-                        <table class="w-full text-[10px] text-left border-collapse">
-                            <thead class="bg-slate-50 text-slate-500 uppercase font-bold sticky top-0">
-                                <tr>
-                                    <th class="p-2 border bg-slate-50 min-w-[80px]">Grade</th>
-                                    ${feeColumns.map(col => html`<th class="p-2 border min-w-[60px] text-center">${col.label}</th>`)}
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-slate-100">
-                                ${(settings.feeStructures || []).map(fee => html`
-                                    <tr key=${fee.grade}>
-                                        <td class="p-2 font-bold text-slate-700 border bg-white">${fee.grade}</td>
-                                        ${feeColumns.map(col => html`
-                                            <td class="p-1 border">
-                                                <input 
-                                                    type="number" 
-                                                    class="w-full p-1 bg-slate-50 rounded text-center focus:bg-white focus:ring-1 focus:ring-blue-500 outline-none" 
-                                                    value=${fee[col.key] || 0} 
-                                                    onInput=${(e) => updateFee(fee.grade, col.key, e.target.value)} 
-                                                />
-                                            </td>
-                                        `)}
-                                    </tr>
-                                `)}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- Selective Import Modal -->
-                ${showImportModal && html`
-                    <div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-                        <div class="bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-200">
-                            <h3 class="text-2xl font-black mb-2">Selective Import</h3>
-                            <p class="text-slate-400 text-sm mb-6">Choose which data categories to override. Deselected categories will keep your current data.</p>
-                            
-                            <div class="grid grid-cols-1 gap-3 mb-8">
-                                ${[
-                                    { id: 'students', label: 'Students Directory', icon: '👥' },
-                                    { id: 'marks', label: 'Marks & Assessments', icon: '📝' },
-                                    { id: 'staff', label: 'Teachers & Staff', icon: '👨‍🏫' },
-                                    { id: 'finance', label: 'Financial Records', icon: '💰' },
-                                    { id: 'settings', label: 'System Settings & Fees', icon: '⚙️' },
-                                    { id: 'modules', label: 'Transport & Library', icon: '🚌' }
-                                ].map(cat => html`
-                                    <label class=${`flex items-center justify-between p-4 rounded-2xl border-2 transition-all cursor-pointer ${
-                                        importSelections[cat.id] ? 'border-primary bg-blue-50/50' : 'border-slate-100 hover:border-slate-200'
-                                    }`}>
-                                        <div class="flex items-center gap-3">
-                                            <span class="text-xl">${cat.icon}</span>
-                                            <span class="font-bold text-sm text-slate-700">${cat.label}</span>
-                                        </div>
-                                        <input 
-                                            type="checkbox" 
-                                            class="w-5 h-5 rounded border-slate-300 text-primary focus:ring-primary"
-                                            checked=${importSelections[cat.id]}
-                                            onChange=${() => setImportSelections({...importSelections, [cat.id]: !importSelections[cat.id]})}
-                                        />
-                                    </label>
-                                `)}
-                            </div>
-
-                            <div class="flex gap-3">
-                                <button onClick=${() => { setShowImportModal(false); setPendingImportData(null); }} class="flex-1 py-4 text-slate-500 font-bold">Cancel</button>
-                                <button onClick=${processImport} class="flex-1 py-4 bg-primary text-white rounded-2xl font-black shadow-lg shadow-blue-200">Import Selected</button>
-                            </div>
+                {/* ===== FEE STRUCTURE AS CARDS - COMPLETELY REBUILT ===== */}
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+                        <div>
+                            <h3 class="font-bold text-xl text-slate-800">Fee Structure Management</h3>
+                            <p class="text-slate-500 text-sm mt-1">Configure fee amounts per grade with professional card interface</p>
+                        </div>
+                        <div class="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+                            <select 
+                                class="p-3 bg-gradient-to-r from-blue-50 to-blue-100 border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-blue-800 shadow-sm"
+                                value=${selectedGradeForFees}
+                                onChange=${e => setSelectedGradeForFees(e.target.value)}
+                            >
+                                ${settings.grades?.map(g => html`<option value=${g}>${g}</option>`)}
+                            </select>
+                            <button 
+                                onClick=${() => setShowAddFeeModal(true)}
+                                class="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-green-300 hover:shadow-green-400 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
+                            >
+                                <span class="text-lg">➕</span>
+                                <span>Add New Fee Item</span>
+                            </button>
                         </div>
                     </div>
-                `}
+
+                    <div class="space-y-6">
+                        ${feeCategories.map(category => {
+                            const categoryItems = getFeeItemsForGrade().filter(item => item.category === category.id);
+                            if (categoryItems.length === 0) return null;
+
+                            return html`
+                                <div class="space-y-3">
+                                    <div class="flex items-center gap-3 mb-3 p-3 ${category.bg} rounded-xl border ${category.border}">
+                                        <div class=${`w-8 h-8 ${category.color} rounded-xl flex items-center justify-center text-white font-bold text-lg shadow-md`}>
+                                            ${category.name.charAt(0)}
+                                        </div>
+                                        <div>
+                                            <h4 class="font-bold text-lg text-slate-800">${category.name}</h4>
+                                            <p class="text-xs text-slate-600 mt-0.5">${categoryItems.length} fee items configured</p>
+                                        </div>
+                                    </div>
+
+                                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                        ${categoryItems.map(item => html`
+                                            <div class="bg-white rounded-xl border ${category.border} p-5 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 ${category.bg} group">
+                                                <div class="flex justify-between items-start mb-3">
+                                                    <div>
+                                                        <h5 class="font-bold text-sm text-slate-800">${item.label}</h5>
+                                                        <p class="text-[10px] text-slate-500 font-mono mt-0.5 bg-slate-100 inline-block px-2 py-0.5 rounded">${item.key}</p>
+                                                    </div>
+                                                    <button 
+                                                        onClick=${() => handleDeleteFeeItem(item.key)}
+                                                        class="text-red-500 hover:text-red-700 text-xl hover:scale-110 transition-transform opacity-0 group-hover:opacity-100"
+                                                        title="Delete fee item"
+                                                    >
+                                                        🗑️
+                                                    </button>
+                                                </div>
+
+                                                <div class="space-y-4 pt-2 border-t border-slate-200">
+                                                    <div class="flex items-center gap-2">
+                                                        <span class="text-slate-700 font-bold text-lg">${settings.currency}</span>
+                                                        <input 
+                                                            type="number" 
+                                                            class="flex-1 p-3 bg-white border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none font-bold text-slate-800 text-lg shadow-sm hover:border-slate-300 transition-colors"
+                                                            value=${item.amount}
+                                                            onInput=${e => updateFee(selectedGradeForFees, item.key, e.target.value)}
+                                                            placeholder="0.00"
+                                                        />
+                                                    </div>
+
+                                                    <div class="flex items-center justify-between pt-1">
+                                                        <span class="text-[11px] font-bold text-slate-600 uppercase tracking-wide">Status</span>
+                                                        <label class="relative inline-flex items-center cursor-pointer">
+                                                            <input 
+                                                                type="checkbox" 
+                                                                class="sr-only peer"
+                                                                checked=${item.amount > 0}
+                                                                onChange=${e => updateFee(selectedGradeForFees, item.key, e.target.checked ? 1000 : 0)}
+                                                            />
+                                                            <div class="w-14 h-7 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-green-500 peer-checked:to-emerald-600 shadow-md"></div>
+                                                            <span class="absolute text-[9px] font-bold text-white -bottom-5 ${item.amount > 0 ? 'left-1' : 'right-1'} transition-all">${item.amount > 0 ? 'ACTIVE' : 'INACTIVE'}</span>
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        `)}
+                                    </div>
+                                </div>
+                            `;
+                        })}
+                    </div>
+
+                    ${getFeeItemsForGrade().length === 0 && html`
+                        <div class="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                            <div class="text-5xl mb-4">📋</div>
+                            <h3 class="font-bold text-lg text-slate-700 mb-2">No Fee Items Configured</h3>
+                            <p class="text-slate-500 max-w-md mx-auto mb-4">Add your first fee item to start building the fee structure for this grade</p>
+                            <button 
+                                onClick=${() => setShowAddFeeModal(true)}
+                                class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold shadow-lg hover:shadow-blue-500 transition-all"
+                            >
+                                + Add First Fee Item
+                            </button>
+                        </div>
+                    `}
+
+                    <div class="mt-6 p-4 bg-blue-50 rounded-xl border border-blue-100">
+                        <div class="flex items-start gap-3">
+                            <div class="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center mt-0.5">
+                                <span class="text-white text-[10px] font-bold">i</span>
+                            </div>
+                            <p class="text-[11px] text-blue-800">
+                                <span class="font-bold">Pro Tip:</span> Toggle fees ON/OFF to quickly enable/disable them. 
+                                Fees with zero amounts won't appear in student registration forms. 
+                                Use the "Add New Fee Item" button to create custom fees like "Medical Fee" or "Sports Uniform".
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                
 
                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
                     <h3 class="font-bold mb-6">School Profile</h3>
@@ -476,7 +590,7 @@ export const Settings = ({ data, setData }) => {
                         </div>
                         <button 
                             onClick=${handleUpdateProfile}
-                            class=${`w-full py-3 rounded-xl font-bold transition-all shadow-lg ${updating ? 'bg-green-500 text-white shadow-green-100' : 'bg-blue-600 text-white shadow-blue-100'}`}
+                            class=${`w-full py-3 rounded-xl font-bold transition-all shadow-lg ${updating ? 'bg-green-500 text-white shadow-green-300' : 'bg-blue-600 text-white shadow-blue-300 hover:bg-blue-700'}`}
                         >
                             ${updating ? '✓ Changes Saved Successfully' : 'Update School Profile'}
                         </button>
@@ -488,12 +602,168 @@ export const Settings = ({ data, setData }) => {
                 <h4 class="text-red-700 font-bold mb-2">Danger Zone</h4>
                 <p class="text-red-600 text-sm mb-4">Resetting all data will clear students, payments, and assessment records permanently.</p>
                 <button 
-                    onClick=${() => { if(confirm('Are you sure?')) { localStorage.clear(); location.reload(); } }}
-                    class="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-bold shadow-sm"
+                    onClick=${() => { if(confirm('Are you sure? This will delete ALL school data permanently!')) { localStorage.clear(); location.reload(); } }}
+                    class="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-bold shadow-sm hover:bg-red-700 transition-colors"
                 >
                     Reset System Data
                 </button>
             </div>
+
+            ${showAddFeeModal && html`
+                <div class="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+                    <div class="bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-300 relative">
+                        <button
+                            onClick=${() => setShowAddFeeModal(false)}
+                            class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-2xl font-bold hover:scale-110 transition-transform"
+                            aria-label="Close modal"
+                        >
+                            &times;
+                        </button>
+                        
+                        <div class="text-center mb-8">
+                            <div class="w-16 h-16 bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+                                <span class="text-3xl text-white">➕</span>
+                            </div>
+                            <h3 class="text-2xl font-black text-slate-800">Add New Fee Item</h3>
+                            <p class="text-slate-500 mt-2">Create a custom fee that will be added to ALL grade structures</p>
+                        </div>
+
+                        <div class="space-y-5">
+                            <div class="space-y-2">
+                                <label class="text-[11px] font-bold text-slate-600 uppercase flex items-center gap-1">
+                                    <span>🔑</span>
+                                    Fee Key (Technical Name)
+                                </label>
+                                <input 
+                                    type="text"
+                                    placeholder="e.g., medical_fee, sports_uniform"
+                                    class="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl focus:border-green-500 focus:ring-2 focus:ring-green-100 outline-none font-mono text-sm"
+                                    value=${newFeeItem.key}
+                                    onInput=${e => setNewFeeItem({...newFeeItem, key: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_')})}
+                                />
+                                <p class="text-[10px] text-slate-400 mt-1 pl-1">
+                                    • Lowercase letters, numbers, underscores only<br/>
+                                    • Cannot be changed after creation<br/>
+                                    • Example: <span class="font-mono bg-slate-100 px-1 rounded">medical_fee</span>
+                                </p>
+                            </div>
+
+                            <div class="space-y-2">
+                                <label class="text-[11px] font-bold text-slate-600 uppercase flex items-center gap-1">
+                                    <span>✏️</span>
+                                    Display Label
+                                </label>
+                                <input 
+                                    type="text"
+                                    placeholder="e.g., Medical Examination Fee"
+                                    class="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl focus:border-green-500 focus:ring-2 focus:ring-green-100 outline-none"
+                                    value=${newFeeItem.label}
+                                    onInput=${e => setNewFeeItem({...newFeeItem, label: e.target.value})}
+                                />
+                                <p class="text-[10px] text-slate-400 mt-1 pl-1">
+                                    What parents/staff will see (e.g., "Medical Fee")
+                                </p>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="space-y-2">
+                                    <label class="text-[11px] font-bold text-slate-600 uppercase flex items-center gap-1">
+                                        <span>📁</span>
+                                        Category
+                                    </label>
+                                    <select
+                                        class="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl focus:border-green-500 focus:ring-2 focus:ring-green-100 outline-none"
+                                        value=${newFeeItem.category}
+                                        onChange=${e => setNewFeeItem({...newFeeItem, category: e.target.value})}
+                                    >
+                                        ${feeCategories.map(cat => html`
+                                            <option value=${cat.id}>${cat.name}</option>
+                                        `)}
+                                    </select>
+                                </div>
+
+                                <div class="space-y-2">
+                                    <label class="text-[11px] font-bold text-slate-600 uppercase flex items-center gap-1">
+                                        <span>💰</span>
+                                        Default Amount
+                                    </label>
+                                    <div class="relative">
+                                        <span class="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-500 font-bold">${settings.currency}</span>
+                                        <input 
+                                            type="number"
+                                            placeholder="0.00"
+                                            class="w-full pl-10 pr-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl focus:border-green-500 focus:ring-2 focus:ring-green-100 outline-none font-bold text-lg"
+                                            value=${newFeeItem.defaultAmount}
+                                            onInput=${e => setNewFeeItem({...newFeeItem, defaultAmount: e.target.value})}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="flex gap-3 pt-2 border-t border-slate-100">
+                                <button 
+                                    type="button"
+                                    onClick=${() => {
+                                        setShowAddFeeModal(false);
+                                        setNewFeeItem({ key: '', label: '', category: 'optional', defaultAmount: 0 });
+                                    }}
+                                    class="flex-1 py-4 bg-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-300 transition-colors shadow-sm"
+                                >
+                                    Cancel
+                                </button>
+                                <button 
+                                    type="button"
+                                    onClick=${handleAddFeeItem}
+                                    class="flex-1 py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl font-black shadow-lg shadow-green-300 hover:shadow-green-400 hover:from-green-600 hover:to-emerald-700 transition-all"
+                                >
+                                    ✅ Add Fee Item
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `}
+
+            {/* Selective Import Modal (unchanged from original) */}
+            ${showImportModal && html`
+                <div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                    <div class="bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+                        <h3 class="text-2xl font-black mb-2">Selective Import</h3>
+                        <p class="text-slate-400 text-sm mb-6">Choose which data categories to override. Deselected categories will keep your current data.</p>
+                        
+                        <div class="grid grid-cols-1 gap-3 mb-8">
+                            ${[
+                                { id: 'students', label: 'Students Directory', icon: '👥' },
+                                { id: 'marks', label: 'Marks & Assessments', icon: '📝' },
+                                { id: 'staff', label: 'Teachers & Staff', icon: '👨‍🏫' },
+                                { id: 'finance', label: 'Financial Records', icon: '💰' },
+                                { id: 'settings', label: 'System Settings & Fees', icon: '⚙️' },
+                                { id: 'modules', label: 'Transport & Library', icon: '🚌' }
+                            ].map(cat => html`
+                                <label class=${`flex items-center justify-between p-4 rounded-2xl border-2 transition-all cursor-pointer ${
+                                    importSelections[cat.id] ? 'border-primary bg-blue-50/50' : 'border-slate-100 hover:border-slate-200'
+                                }`}>
+                                    <div class="flex items-center gap-3">
+                                        <span class="text-xl">${cat.icon}</span>
+                                        <span class="font-bold text-sm text-slate-700">${cat.label}</span>
+                                    </div>
+                                    <input 
+                                        type="checkbox" 
+                                        class="w-5 h-5 rounded border-slate-300 text-primary focus:ring-primary"
+                                        checked=${importSelections[cat.id]}
+                                        onChange=${() => setImportSelections({...importSelections, [cat.id]: !importSelections[cat.id]})}
+                                    />
+                                </label>
+                            `)}
+                        </div>
+
+                        <div class="flex gap-3">
+                            <button onClick=${() => { setShowImportModal(false); setPendingImportData(null); }} class="flex-1 py-4 text-slate-500 font-bold">Cancel</button>
+                            <button onClick=${processImport} class="flex-1 py-4 bg-primary text-white rounded-2xl font-black shadow-lg shadow-blue-200">Import Selected</button>
+                        </div>
+                    </div>
+                </div>
+            `}
         </div>
     `;
 };
