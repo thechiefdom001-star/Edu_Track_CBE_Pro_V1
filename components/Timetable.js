@@ -47,7 +47,7 @@ export const Timetable = ({ data, setData }) => {
 
     const handleAddEntry = (e) => {
         e.preventDefault();
-        const updated = [...timetables, { ...newEntry, id: Date.now().toString() }];
+        const updated = [...timetables, { ...newEntry, id: Date.now().toString(), academicYear: data.settings.academicYear }];
         setData({ ...data, timetables: updated });
         setShowAddEntry(false);
         setNewEntry({ ...newEntry, subject: '' });
@@ -61,6 +61,9 @@ export const Timetable = ({ data, setData }) => {
 
     const getEntry = (day, slotId, filterVal, gradeOverride = null) => {
         return timetables.find(t => {
+            // Only consider entries for the active academic year
+            if (t.academicYear && t.academicYear !== data.settings.academicYear) return false;
+
             const matchesDay = t.day === day && t.period === slotId;
             if (!matchesDay) return false;
             
