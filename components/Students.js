@@ -425,9 +425,10 @@ export const Students = ({ data, setData, onSelectStudent }) => {
             `}
 
             <div class="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-x-auto no-scrollbar">
-                <table class="w-full text-left min-w-[800px]">
+                <table class="w-full text-left min-w-[800px] students-print-table">
                     <thead class="bg-slate-50 border-b border-slate-100">
                         <tr>
+                            <th class="px-6 py-4 text-[10px] font-bold text-slate-500 uppercase">#</th>
                             <th class="px-6 py-4 text-[10px] font-bold text-slate-500 uppercase">Name</th>
                             <th class="px-6 py-4 text-[10px] font-bold text-slate-500 uppercase">Adm No</th>
                             <th class="px-6 py-4 text-[10px] font-bold text-slate-500 uppercase">Adm Date</th>
@@ -439,8 +440,13 @@ export const Students = ({ data, setData, onSelectStudent }) => {
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-50">
-                        ${paginatedStudents.map(student => html`
-                            <tr key=${student.id} class="hover:bg-slate-100 transition-colors even:bg-slate-50">
+                        ${(
+                            /* On screen: show paginated slice. On print: all rows rendered,
+                               CSS hides the screen-subset and shows the full-list tbody */
+                            paginatedStudents
+                        ).map((student, idx) => html`
+                            <tr key=${student.id} class="hover:bg-slate-100 transition-colors even:bg-slate-50 students-screen-row">
+                                <td class="px-6 py-4 text-slate-400 text-xs font-mono">${(currentPage - 1) * itemsPerPage + idx + 1}</td>
                                 <td class="px-6 py-4">
                                     <div class="font-bold text-sm">${student.name}</div>
                                     <div class="text-[9px] text-slate-400 uppercase">${student.stream || 'No Stream'}</div>
@@ -496,20 +502,21 @@ export const Students = ({ data, setData, onSelectStudent }) => {
                             </tr>
                         `)}
                     </tbody>
-                    <!-- Print view: All students (hidden on screen, visible in print) -->
-                    <tbody class="divide-y divide-slate-50 hidden print:block">
-                        ${filteredStudents.map(student => html`
-                            <tr key=${student.id} class="hover:bg-slate-100 transition-colors even:bg-slate-50">
-                                <td class="px-6 py-4">
+                    <!-- Full data tbody: hidden on screen, visible during print -->
+                    <tbody class="students-print-rows" style="display:none">
+                        ${filteredStudents.map((student, idx) => html`
+                            <tr key=${`print-${student.id}`} class="even:bg-slate-50">
+                                <td class="px-4 py-2 text-slate-400 text-xs font-mono">${idx + 1}</td>
+                                <td class="px-4 py-2">
                                     <div class="font-bold text-sm">${student.name}</div>
                                     <div class="text-[9px] text-slate-400 uppercase">${student.stream || 'No Stream'}</div>
                                 </td>
-                                <td class="px-6 py-4 text-slate-500 text-sm font-mono">${student.admissionNo}</td>
-                                <td class="px-6 py-4 text-slate-500 text-xs font-mono">${student.admissionDate || '-'}</td>
-                                <td class="px-6 py-4 text-slate-500 text-xs font-mono">${student.upiNo || '-'}</td>
-                                <td class="px-6 py-4 text-slate-500 text-xs font-mono">${student.assessmentNo || '-'}</td>
-                                <td class="px-6 py-4 text-slate-700 text-xs font-bold">${student.parentContact || '-'}</td>
-                                <td class="px-6 py-4">
+                                <td class="px-4 py-2 text-slate-500 text-sm font-mono">${student.admissionNo}</td>
+                                <td class="px-4 py-2 text-slate-500 text-xs font-mono">${student.admissionDate || '-'}</td>
+                                <td class="px-4 py-2 text-slate-500 text-xs font-mono">${student.upiNo || '-'}</td>
+                                <td class="px-4 py-2 text-slate-500 text-xs font-mono">${student.assessmentNo || '-'}</td>
+                                <td class="px-4 py-2 text-slate-700 text-xs font-bold">${student.parentContact || '-'}</td>
+                                <td class="px-4 py-2">
                                     <div class="flex flex-col gap-1">
                                         <span class="bg-slate-200 px-2 py-1 rounded text-[10px] font-bold uppercase whitespace-nowrap">${student.grade}${student.stream || ''}</span>
                                         ${['GRADE 10', 'GRADE 11', 'GRADE 12'].includes(student.grade) && html`
@@ -517,39 +524,6 @@ export const Students = ({ data, setData, onSelectStudent }) => {
                                                 ${student.seniorPathway ? student.seniorPathway.replace(/([A-Z])/g, ' $1') : 'No Pathway'}
                                             </span>
                                         `}
-                                    </div>
-                                </td>
-                                <td class="px-6 py-4 no-print">
-                                    <div class="flex items-center gap-3">
-                                        <button 
-                                            type="button"
-                                            onClick=${() => handlePromote(student)}
-                                            class="bg-blue-50 text-blue-600 px-2 py-1 rounded font-black text-[9px] hover:bg-blue-600 hover:text-white transition-all uppercase"
-                                            title="Promote to Next Grade"
-                                        >
-                                            Promote
-                                        </button>
-                                        <button 
-                                            type="button"
-                                            onClick=${() => onSelectStudent(student.id)}
-                                            class="text-blue-600 font-bold text-[10px] hover:underline uppercase tracking-tight"
-                                        >
-                                            Report
-                                        </button>
-                                        <button 
-                                            type="button"
-                                            onClick=${() => handleEdit(student)}
-                                            class="text-slate-600 font-bold text-[10px] hover:underline uppercase tracking-tight"
-                                        >
-                                            Edit
-                                        </button>
-                                        <button 
-                                            type="button"
-                                            onClick=${() => handleDelete(student.id)}
-                                            class="text-red-500 font-bold text-[10px] hover:underline uppercase tracking-tight"
-                                        >
-                                            Del
-                                        </button>
                                     </div>
                                 </td>
                             </tr>

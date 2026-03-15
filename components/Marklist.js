@@ -138,7 +138,8 @@ export const Marklist = ({ data = {}, setData = () => { } }) => {
                             <th class="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase text-center">Remarks</th>
                         </tr>
                     </thead>
-                    <tbody class="divide-y divide-slate-100">
+                    <!-- Screen tbody: paginated rows only -->
+                    <tbody class="divide-y divide-slate-100 marklist-screen-rows">
                         ${paginatedStudents.map(student => {
         const remark = remarksList.find(r => r.studentId === student.id) || { teacher: '', principal: '' };
         return html`
@@ -237,18 +238,47 @@ export const Marklist = ({ data = {}, setData = () => { } }) => {
                             `;
     })}
                     </tbody>
-                    ${students.length > 0 && html`
-                        <tr class="bg-slate-100 border-t-2 border-slate-300">
-                            <td colspan="100" class="p-0">
-                                ${h(PaginationControls, {
-        currentPage,
-        onPageChange: handlePageChange,
-        totalItems: students.length,
-        itemsPerPage
+                    <!-- Print tbody: ALL students, hidden on screen, shown during print -->
+                    <tbody class="marklist-print-rows" style="display:none">
+                        ${students.map(student => {
+        const remark = remarksList.find(r => r.studentId === student.id) || { teacher: '', principal: '' };
+        return html`
+                                <tr key=${`print-${student.id}`} class="even:bg-slate-50">
+                                    <td class="px-4 py-2 border-r">
+                                        <div class="font-bold text-sm">${student.name}</div>
+                                        <div class="text-[9px] text-slate-400 uppercase">${student.admissionNo || '-'}</div>
+                                    </td>
+                                    ${subjects.map(subject => {
+            const assessment = assessmentsList.find(a =>
+                a.studentId === student.id &&
+                a.subject === subject &&
+                a.term === selectedTerm &&
+                a.examType === selectedExamType &&
+                a.academicYear === academicYear
+            );
+            const score = assessment ? Number(assessment.score) : null;
+            const gradeInfo = score !== null ? Storage.getGradeInfo(score) : null;
+            return html`
+                                            <td key=${subject} class="px-1 py-2 border-r text-center">
+                                                <span class="text-xs font-bold">${score !== null ? score : '-'}</span>
+                                            </td>
+                                            <td class="px-1 py-2 border-r text-center">
+                                                <span class="text-[8px] font-bold px-1 py-0.5 rounded ${gradeInfo?.level?.startsWith('EE') ? 'bg-green-100 text-green-700' :
+                    gradeInfo?.level?.startsWith('ME') ? 'bg-blue-100 text-blue-700' :
+                        gradeInfo?.level?.startsWith('AE') ? 'bg-yellow-100 text-yellow-700' :
+                            gradeInfo?.level?.startsWith('BE') ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500'}">
+                                                    ${gradeInfo?.label || '-'}
+                                                </span>
+                                            </td>
+                                        `;
+        })}
+                                    <td class="px-2 py-2">
+                                        <span class="text-[8px] italic">${remark.teacher || '-'}</span>
+                                    </td>
+                                </tr>
+                            `;
     })}
-                            </td>
-                        </tr>
-                    `}
+                    </tbody>
                     <tfoot class="bg-slate-50 border-t-2 border-slate-200">
                         <tr class="font-bold text-slate-900">
                             <td class="px-4 py-3 text-[10px] uppercase border-r">Column Totals</td>
@@ -295,6 +325,16 @@ export const Marklist = ({ data = {}, setData = () => { } }) => {
                         </tr>
                     </tfoot>
                 </table>
+                ${students.length > 0 && html`
+                    <div class="no-print">
+                        ${h(PaginationControls, {
+                            currentPage,
+                            onPageChange: handlePageChange,
+                            totalItems: students.length,
+                            itemsPerPage
+                        })}
+                    </div>
+                `}
                 ${students.length === 0 && html`<div class="p-12 text-center text-slate-400">No students registered in this grade.</div>`}
             </div>
 
