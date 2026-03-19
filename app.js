@@ -27,11 +27,29 @@ const html = htm.bind(h);
 
 const App = () => {
     const [view, setView] = useState('dashboard');
-    const [data, setData] = useState(Storage.load());
+    const [data, setData] = useState(() => {
+        const loaded = Storage.load();
+        console.log('Initial load - Students:', loaded.students?.length || 0, 'Payments:', loaded.payments?.length || 0);
+        return loaded;
+    });
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-    const [selectedStudent, setSelectedStudent] = useState(null);
+    const [selectedStudentId, setSelectedStudentId] = useState(null);
     const [isAdmin, setIsAdmin] = useState(localStorage.getItem('et_is_admin') === 'true');
+    
+    // Derive selectedStudent from data.students to ensure it's always fresh
+    const selectedStudent = selectedStudentId 
+        ? (data.students || []).find(s => String(s.id) === String(selectedStudentId)) || null
+        : null;
+    
+    // Sync selectedStudentId when data.students changes (e.g., after Google sync)
+    useEffect(() => {
+        if (selectedStudentId && !selectedStudent) {
+            // Student no longer exists in data, clear selection
+            console.log('Selected student no longer found in data, clearing selection');
+            setSelectedStudentId(null);
+        }
+    }, [data.students, selectedStudentId, selectedStudent]);
     const [loginUsername, setLoginUsername] = useState('');
     const [loginPassword, setLoginPassword] = useState('');
     const [showLoginModal, setShowLoginModal] = useState(false);
@@ -61,8 +79,21 @@ const App = () => {
     }, []);
 
     useEffect(() => {
+        // Ensure payments are always saved
+        if (data.payments && data.payments.length > 0) {
+            Storage.save(data);
+        }
+    }, [data.payments]);
+    
+    // Save all data changes
+    useEffect(() => {
         Storage.save(data);
     }, [data]);
+
+    // Track data changes for debugging
+    useEffect(() => {
+        console.log('App data updated - Students:', data.students?.length || 0, 'Payments:', data.payments?.length || 0);
+    }, [data.students, data.payments]);
 
     useEffect(() => {
         const ws = window.websim;
@@ -73,7 +104,12 @@ const App = () => {
                 const project = await ws.getCurrentProject();
                 const remoteData = await Storage.pullFromCloud(project.id);
                 if (remoteData) {
-                    setData(prev => Storage.mergeData(prev, remoteData, 'all'));
+                    console.log('Cloud data received - Students:', remoteData.students?.length || 0, 'Payments:', remoteData.payments?.length || 0);
+                    setData(prev => {
+                        const merged = Storage.mergeData(prev, remoteData, 'all');
+                        console.log('After merge - Students:', merged.students?.length || 0, 'Payments:', merged.payments?.length || 0);
+                        return merged;
+                    });
                 }
             } catch (err) {
                 console.warn("Initial cloud sync skipped:", err);
@@ -168,127 +204,21 @@ const App = () => {
         setIsSyncing(false);
     };
 
-    // helper pushed inside component scope
+    // simplified helper for pushing all local changes
     const pushLocalToGoogle = useCallback(async (sheetData) => {
-        console.log('📤 pushLocalToGoogle OPTIMIZED - called with', sheetData?.students?.length, 'sheet students');
-        if (!sheetData || !sheetData.success) return;
-
-        // Create efficient maps for comparison
-        const sheetStudents = sheetData.students || [];
+        if (!data?.settings?.googleScriptUrl) return;
+        console.log('📤 Syncing all local data to Google Sheet...');
         
-        const sheetAssess = sheetData.assessments || [];
-        const assessMap = new Map(sheetAssess.map(a => 
-            [`${String(a.studentId)}-${a.subject}-${a.term}-${a.examType}-${a.academicYear}`, a]
-        ));
+        googleSheetSync.setSettings(data.settings);
+        const result = await googleSheetSync.syncAll(data);
         
-        const sheetAtt = sheetData.attendance || [];
-        const attMap = new Map(sheetAtt.map(a => [`${String(a.studentId)}-${a.date}`, a]));
-
-        const sheetPay = sheetData.payments || [];
-        const payMap = new Map(sheetPay.map(p => [String(p.id), p]));
-
-        // Identify ALL changes first
-        const studentsToSync = [];
-        const assessmentsToSync = [];
-        const attendanceToSync = [];
-        const paymentsToSync = [];
-
-        const isStudentEqual = (local, remote) => {
-            if (!remote) return false;
-            if (local.name !== remote.name) return false;
-            if (local.grade !== remote.grade) return false;
-            if (local.stream !== remote.stream) return false;
-            if (local.parentContact !== remote.parentContact) return false;
-            if (String(local.previousArrears || '0') !== String(remote.previousArrears || '0')) return false;
-            
-            const localFees = (local.selectedFees || []).slice().sort().join(',');
-            const remoteFees = (remote.selectedFees || []).slice().sort().join(',');
-            if (localFees !== remoteFees) return false;
-            
+        if (result.success) {
+            console.log('✅ Global sync complete');
             return true;
-        };
-
-        const isAssessmentEqual = (local, remote) => {
-            if (!remote) return false;
-            return String(local.score) === String(remote.score) && String(local.level) === String(remote.level);
-        };
-
-        const isAttendanceEqual = (local, remote) => {
-            if (!remote) return false;
-            return String(local.status) === String(remote.status);
-        };
-
-        const isPaymentEqual = (local, remote) => {
-            if (!remote) return false;
-            if (String(local.amount) !== String(remote.amount)) return false;
-            if (local.voided !== remote.voided) return false;
-            return true;
-        };
-
-        // Build a case-insensitive map for students
-        const sheetStudentsMap = new Map();
-        for (const s of sheetStudents) {
-            const admLower = String(s.admissionNo || '').toLowerCase().trim();
-            if (admLower && !sheetStudentsMap.has(admLower)) {
-                sheetStudentsMap.set(admLower, s);
-            }
+        } else {
+            console.warn('⚠ Global sync partially failed or action missing:', result.error);
+            return false;
         }
-
-        for (const s of (data.students || [])) {
-            const admNo = s.admissionNo ? String(s.admissionNo).trim().toLowerCase() : '';
-            const remote = sheetStudentsMap.get(admNo);
-            if (!isStudentEqual(s, remote)) {
-                studentsToSync.push(s);
-            }
-        }
-
-        for (const a of (data.assessments || [])) {
-            const key = `${String(a.studentId)}-${a.subject}-${a.term}-${a.examType}-${a.academicYear}`;
-            const remote = assessMap.get(key);
-            if (!isAssessmentEqual(a, remote)) {
-                assessmentsToSync.push(a);
-            }
-        }
-
-        for (const a of (data.attendance || [])) {
-            const key = `${String(a.studentId)}-${a.date}`;
-            const remote = attMap.get(key);
-            if (!isAttendanceEqual(a, remote)) {
-                attendanceToSync.push(a);
-            }
-        }
-
-        for (const p of (data.payments || [])) {
-            const remote = payMap.get(String(p.id));
-            if (!isPaymentEqual(p, remote)) {
-                paymentsToSync.push(p);
-            }
-        }
-
-        // Push ALL in parallel using bulk operations
-        const syncPromises = [];
-        
-        if (studentsToSync.length > 0) {
-            syncPromises.push(googleSheetSync.bulkPushStudents(studentsToSync).catch(e => console.error('Student sync error:', e)));
-        }
-        
-        if (assessmentsToSync.length > 0) {
-            syncPromises.push(googleSheetSync.bulkPushAssessments(assessmentsToSync).catch(e => console.error('Assessment sync error:', e)));
-        }
-        
-        if (attendanceToSync.length > 0) {
-            syncPromises.push(googleSheetSync.bulkPushAttendance(attendanceToSync).catch(e => console.error('Attendance sync error:', e)));
-        }
-
-        if (paymentsToSync.length > 0) {
-            syncPromises.push(googleSheetSync.bulkPushPayments(paymentsToSync).catch(e => console.error('Payment sync error:', e)));
-        }
-
-        if (syncPromises.length > 0) {
-            await Promise.all(syncPromises);
-        }
-        
-        console.log('   ✅ Parallel bulk sync completed');
     }, [data, googleSheetSync]);
 
     const handleGoogleSync = useCallback(async () => {
@@ -372,16 +302,16 @@ const App = () => {
         return () => window.removeEventListener('online', onOnline);
     }, [data.settings?.googleScriptUrl, handleGoogleSync]);
 
-    // periodic sync every 5 minutes if configured and online
+    // periodic sync every 2 minutes for "instant" feel
     useEffect(() => {
         if (!data.settings?.googleScriptUrl) return;
         const interval = setInterval(() => {
-            if (navigator.onLine) {
+            if (navigator.onLine && !isGoogleSyncing) {
                 handleGoogleSync();
             }
-        }, 5 * 60 * 1000); // 5 minutes
+        }, 2 * 60 * 1000); // 2 minutes
         return () => clearInterval(interval);
-    }, [data.settings?.googleScriptUrl, handleGoogleSync]);
+    }, [data.settings?.googleScriptUrl, handleGoogleSync, isGoogleSyncing]);
 
     // Auto-sync on app load if Google Sheet configured
     useEffect(() => {
@@ -474,16 +404,14 @@ const App = () => {
 
     const navigate = (v, params = null) => {
         if (params?.studentId) {
-            const student = (data.students || []).find(s => s.id === params.studentId);
-            setSelectedStudent(student);
+            setSelectedStudentId(params.studentId);
         }
         setView(v);
         setIsMobileMenuOpen(false);
     };
 
     const handleAcademicPrintSelect = (id, isBatch = false) => {
-        const student = (data.students || []).find(s => s.id === id);
-        setSelectedStudent(student);
+        setSelectedStudentId(id);
         if (isBatch) {
             setView('batch-reports');
         } else {
@@ -727,8 +655,7 @@ const App = () => {
                     [class*="sidebar"],
                     nav,
                     button,
-                    [class*="mobile"],
-                    .hidden {
+                    [class*="mobile"] {
                         display: none !important;
                     }
 
@@ -925,9 +852,12 @@ const StudentDetail = ({ student, data, setData, onBack, isBatch = false, initia
     });
 
     const totalMarks = subjectAverages.reduce((sum, avg) => sum + (avg || 0), 0);
-    const totalPoints = subjectAverages.reduce((sum, avg) => sum + (avg !== null ? Storage.getGradeInfo(avg).points : 0), 0);
     const subjectCount = subjects.length;
-    const overallLevel = Storage.getOverallLevel(totalPoints, subjectCount);
+    // Overall level = calculated from average of subject percentages
+    const overallResult = Storage.getOverallLevel(subjectAverages.filter(a => a !== null));
+    const overallLevel = overallResult.level;
+    const overallPercentage = overallResult.percentage;
+    const overallAL = overallResult.al;
     const attendancePercentage = isFullYear
         ? Storage.getStudentAttendance(student.id, data.attendance || [])
         : Storage.getStudentAttendance(student.id, data.attendance || [], selectedTerm);
@@ -944,18 +874,12 @@ const StudentDetail = ({ student, data, setData, onBack, isBatch = false, initia
                 }).filter(s => s !== null);
                 return scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
             });
-            const subjectPoints = {};
-            termSubjects.forEach((avg, idx) => {
-                const pts = avg !== null ? Storage.getGradeInfo(avg).points : 0;
-                subjectPoints[subjects[idx]] = pts;
-            });
-            const termPoints = termSubjects.reduce((sum, avg) => sum + (avg !== null ? Storage.getGradeInfo(avg).points : 0), 0);
-            const termLevel = Storage.getOverallLevel(termPoints, subjects.length);
+            const termOverall = Storage.getOverallLevel(termSubjects.filter(t => t !== null));
             const termAttendance = Storage.getStudentAttendance(student.id, data.attendance || [], term);
             const avgScore = termSubjects.filter(s => s !== null).length > 0
                 ? Math.round(termSubjects.reduce((a, b) => a + (b || 0), 0) / termSubjects.filter(s => s !== null).length)
                 : 0;
-            return { term, avgScore, termPoints, termLevel, termAttendance, subjectPoints };
+            return { term, avgScore, termLevel: termOverall.level, termPercentage: termOverall.percentage, termAL: termOverall.al, termAttendance };
         });
     };
 
@@ -966,13 +890,15 @@ const StudentDetail = ({ student, data, setData, onBack, isBatch = false, initia
     const t2Data = yearSummary[1] || {};
     const t3Data = yearSummary[2] || {};
 
-    const payments = data.payments.filter(p => p.studentId === student.id);
-    const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount), 0);
+    // Filter out voided payments from balance calculation
+    // Important: Use String() conversion for IDs to avoid numeric mismatch
+    const paymentsForStudent = (data.payments || []).filter(p => String(p.studentId) === String(student.id) && !p.voided);
+    const totalPaid = paymentsForStudent.reduce((sum, p) => sum + Number(p.amount), 0);
 
     const feeStructure = data.settings.feeStructures.find(f => f.grade === student.grade);
     const feeKeys = ['t1', 't2', 't3', 'breakfast', 'lunch', 'trip', 'bookFund', 'caution', 'uniform', 'studentCard', 'remedial'];
 
-    // Calculate total due based ONLY on student's selected payable items
+    // Calculate total due: Previous Arrears + Student's selected payable items
     let selectedKeys;
     if (typeof student.selectedFees === 'string') {
         selectedKeys = student.selectedFees.split(',').map(f => f.trim()).filter(f => f);
@@ -981,7 +907,9 @@ const StudentDetail = ({ student, data, setData, onBack, isBatch = false, initia
     } else {
         selectedKeys = ['t1', 't2', 't3'];
     }
-    const totalDue = feeStructure ? selectedKeys.reduce((sum, key) => sum + (feeStructure[key] || 0), 0) : 0;
+    const previousArrears = Number(student.previousArrears) || 0;
+    const currentFeesDue = feeStructure ? selectedKeys.reduce((sum, key) => sum + (feeStructure[key] || 0), 0) : 0;
+    const totalDue = previousArrears + currentFeesDue;
     const balance = totalDue - totalPaid;
 
     const remark = (data.remarks || []).find(r => r.studentId === student.id) || { teacher: '', principal: '' };
@@ -1069,24 +997,16 @@ const StudentDetail = ({ student, data, setData, onBack, isBatch = false, initia
             })()
             : totalMarks}</p>
                     </div>
-                    <div class="p-2 bg-indigo-50 rounded-lg print:p-1.5 border border-indigo-100">
-                        <p class="text-[8px] text-indigo-600 font-bold uppercase">${isFullYear ? 'Avg Points' : 'Total Points'}</p>
-                        <p class="text-sm font-bold print:text-[11px]">${isFullYear
-            ? (() => {
-                const allScores = [];
-                yearSummary.forEach(ys => {
-                    subjects.forEach(subject => {
-                        const pts = ys.subjectPoints?.[subject] || 0;
-                        if (pts > 0) allScores.push(pts);
-                    });
-                });
-                if (allScores.length === 0) return '-';
-                return (allScores.reduce((a, b) => a + b, 0) / allScores.length).toFixed(1);
-            })()
-            : totalPoints}</p>
-                    </div>
                     <div class="p-2 bg-green-50 rounded-lg print:p-1.5 border border-green-100">
-                        <p class="text-[8px] text-green-600 font-bold uppercase">Overall</p>
+                        <p class="text-[8px] text-green-600 font-bold uppercase">Overall %</p>
+                        <p class="text-sm font-bold print:text-[11px]">${overallPercentage}%</p>
+                    </div>
+                    <div class="p-2 bg-blue-50 rounded-lg print:p-1.5 border border-blue-100">
+                        <p class="text-[8px] text-blue-600 font-bold uppercase">AL</p>
+                        <p class="text-sm font-bold print:text-[11px]">${overallAL}</p>
+                    </div>
+                    <div class="p-2 bg-orange-50 rounded-lg print:p-1.5 border border-orange-100">
+                        <p class="text-[8px] text-orange-600 font-bold uppercase">Grade</p>
                         <p class="text-sm font-bold print:text-[11px]">${overallLevel}</p>
                     </div>
                     <div class="p-2 bg-purple-50 rounded-lg print:p-1.5 border border-purple-100">
@@ -1312,7 +1232,7 @@ const StudentDetail = ({ student, data, setData, onBack, isBatch = false, initia
                 return sum + (subScores.length > 0 ? subScores.reduce((a, b) => a + b, 0) / subScores.length : 0);
             }, 0)) || '-'}
                                         </td>
-                                        <td class="p-2 print:p-1.5 text-center border-l font-black text-blue-700 print:text-[11px]">${totalPoints}</td>
+                                        <td class="p-2 print:p-1.5 text-center border-l font-black text-blue-700 print:text-[11px]">${overallAL}</td>
                                     </tr>
                                     <tr class="bg-white print:border-black">
                                         <td class="p-2 print:p-1.5 uppercase text-[9px] text-blue-600 font-black">Mean Score Average</td>
@@ -1471,9 +1391,9 @@ const StudentDetail = ({ student, data, setData, onBack, isBatch = false, initia
                                     <thead class="bg-slate-100">
                                         <tr>
                                             <th class="border p-2 text-left">Term</th>
-                                            <th class="border p-2 text-center">Avg Score</th>
-                                            <th class="border p-2 text-center">Total Points</th>
-                                            <th class="border p-2 text-center">Overall Level</th>
+                                            <th class="border p-2 text-center">Avg %</th>
+                                            <th class="border p-2 text-center">AL</th>
+                                            <th class="border p-2 text-center">Grade</th>
                                             <th class="border p-2 text-center">Attendance</th>
                                         </tr>
                                     </thead>
@@ -1481,14 +1401,14 @@ const StudentDetail = ({ student, data, setData, onBack, isBatch = false, initia
                                         ${yearSummary.map(ys => html`
                                             <tr>
                                                 <td class="border p-2 font-bold">${ys.term.replace('T', 'Term ')}</td>
-                                                <td class="border p-2 text-center">${ys.avgScore}%</td>
-                                                <td class="border p-2 text-center">${ys.termPoints}</td>
+                                                <td class="border p-2 text-center">${ys.termPercentage || 0}%</td>
+                                                <td class="border p-2 text-center font-bold">${ys.termAL || '-'}</td>
                                                 <td class="border p-2 text-center">
-                                                    <span class=${`px-2 py-0.5 rounded-full text-[10px] font-bold ${ys.termLevel === 'EE' ? 'bg-green-100 text-green-700' :
-                    ys.termLevel === 'ME' ? 'bg-blue-100 text-blue-700' :
-                        ys.termLevel === 'AE' ? 'bg-yellow-100 text-yellow-700' :
-                            ys.termLevel === 'BE' ? 'bg-red-100 text-red-700' :
-                                'bg-slate-100 text-slate-500'
+                                                    <span class=${`px-2 py-0.5 rounded-full text-[10px] font-bold ${ys.termLevel.startsWith('EE') ? 'bg-green-100 text-green-700' :
+                            ys.termLevel.startsWith('ME') ? 'bg-blue-100 text-blue-700' :
+                                ys.termLevel.startsWith('AE') ? 'bg-yellow-100 text-yellow-700' :
+                                    ys.termLevel.startsWith('BE') ? 'bg-red-100 text-red-700' :
+                                        'bg-slate-100 text-slate-500'
                 }`}>
                                                         ${ys.termLevel}
                                                     </span>
@@ -1498,30 +1418,20 @@ const StudentDetail = ({ student, data, setData, onBack, isBatch = false, initia
                                         `)}
                                         <tr class="bg-blue-50 font-bold">
                                             <td class="border p-2">YEAR AVERAGE</td>
+                                            <td class="border p-2 text-center">${overallPercentage}%</td>
+                                            <td class="border p-2 text-center">${overallAL}</td>
                                             <td class="border p-2 text-center">
-                                                ${(() => {
-                const allScores = [];
-                yearSummary.forEach(ys => {
-                    subjects.forEach(subject => {
-                        const pts = ys.subjectPoints?.[subject] || 0;
-                        if (pts > 0) allScores.push(pts);
-                    });
-                });
-                if (allScores.length === 0) return '-';
-                const avgPts = allScores.reduce((a, b) => a + b, 0) / allScores.length;
-                return Math.round(avgPts * 12.5) + '%';
-            })()}
+                                                <span class=${`px-2 py-0.5 rounded-full text-[10px] font-bold ${overallLevel.startsWith('EE') ? 'bg-green-100 text-green-700' :
+                            overallLevel.startsWith('ME') ? 'bg-blue-100 text-blue-700' :
+                                overallLevel.startsWith('AE') ? 'bg-yellow-100 text-yellow-700' :
+                                    overallLevel.startsWith('BE') ? 'bg-red-100 text-red-700' :
+                                        'bg-slate-100 text-slate-500'
+                }`}>
+                                                    ${overallLevel}
+                                                </span>
                                             </td>
-                                            <td class="border p-2 text-center">
-                                                ${(() => {
-                const allScores = [];
-                yearSummary.forEach(ys => {
-                    subjects.forEach(subject => {
-                        const pts = ys.subjectPoints?.[subject] || 0;
-                        if (pts > 0) allScores.push(pts);
-                    });
-                });
-                if (allScores.length === 0) return '-';
+                                            <td class="border p-2 text-center">-</td>
+                                        </tr>
                 return (allScores.reduce((a, b) => a + b, 0) / allScores.length).toFixed(1);
             })()}
                                             </td>
