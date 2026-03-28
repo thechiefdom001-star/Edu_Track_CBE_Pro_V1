@@ -715,6 +715,80 @@ const App = () => {
         setIsGoogleSyncing(false);
     }, [data, setData, googleSheetSync, pushLocalToGoogle]);
 
+    const handlePullFromGoogle = useCallback(async () => {
+        if (!data.settings.googleScriptUrl) {
+            alert("Google Sheet not configured. Go to Settings > Google Sheet Sync to configure.");
+            return;
+        }
+
+        if (isGoogleSyncing) {
+            console.log('Google pull already in progress, skipping...');
+            return;
+        }
+
+        const now = Date.now();
+        if (now - lastSyncRef.current < SYNC_COOLDOWN) {
+            alert('Please wait a moment before syncing again.');
+            return;
+        }
+
+        setIsGoogleSyncing(true);
+        setGoogleSyncStatus('Loading from Google Sheet...');
+        lastSyncRef.current = now;
+
+        googleSheetSync.setSettings(data.settings);
+
+        try {
+            const result = await googleSheetSync.fetchAll();
+
+            if (!result.success) {
+                alert("Sync failed: " + result.error);
+                setGoogleSyncStatus('');
+                setIsGoogleSyncing(false);
+                return;
+            }
+
+            const pulledData = Storage.ensureDataIntegrity(
+                Storage.replaceWithGoogleData(
+                    {
+                        ...data,
+                        students: [],
+                        assessments: [],
+                        attendance: [],
+                        payments: [],
+                        teachers: [],
+                        staff: []
+                    },
+                    result
+                )
+            );
+
+            pulledData.settings = {
+                ...pulledData.settings,
+                googleScriptUrl: data.settings.googleScriptUrl
+            };
+
+            console.log('Google pull complete:', {
+                students: pulledData.students?.length,
+                assessments: pulledData.assessments?.length,
+                attendance: pulledData.attendance?.length,
+                payments: pulledData.payments?.length,
+                teachers: pulledData.teachers?.length,
+                staff: pulledData.staff?.length
+            });
+
+            setData(pulledData);
+            Storage.save(pulledData);
+            setGoogleSyncStatus(`✓ Loaded ${pulledData.students?.length || 0} students from Google`);
+            setTimeout(() => setGoogleSyncStatus(''), 5000);
+        } catch (error) {
+            alert("Sync error: " + error.message);
+            setGoogleSyncStatus('');
+        }
+
+        setIsGoogleSyncing(false);
+    }, [data, isGoogleSyncing, setData, googleSheetSync]);
+
     // when the browser regains connectivity, automatically sync with Google
     // NOTE: Disabled - user must use Force Push to sync data
     useEffect(() => {
@@ -1176,7 +1250,7 @@ const App = () => {
                                 alert("Google Sheet not configured. Go to Settings > Teacher Data Sync.");
                                 return;
                             }
-                            handleGoogleSync();
+                            handlePullFromGoogle();
                         }}
                         disabled=${isGoogleSyncing}
                         class=${`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all border ${isGoogleSyncing
