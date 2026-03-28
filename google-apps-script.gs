@@ -22,6 +22,7 @@
 // ==================== CONFIGURATION ====================
 const SCRIPT_VERSION = '4.0.0';
 const CACHE_DURATION = 300;
+const CACHE_MAX_VALUE_SIZE = 95000;
 const MAX_RETRIES = 3;
 const BATCH_SIZE = 500;
 const BACKUP_RETENTION_DAYS = 30;
@@ -231,7 +232,16 @@ function getAllRecords(sheetName, headers, useCache = true) {
   }
   
   if (useCache) {
-    dataCache.put(cacheKey, JSON.stringify(results), CACHE_DURATION);
+    try {
+      const serialized = JSON.stringify(results);
+      if (serialized.length <= CACHE_MAX_VALUE_SIZE) {
+        dataCache.put(cacheKey, serialized, CACHE_DURATION);
+      } else {
+        console.log(`[Cache] Skipping cache for ${sheetName}: payload too large (${serialized.length} chars)`);
+      }
+    } catch (cacheError) {
+      console.warn(`[Cache] Failed to cache ${sheetName}: ${cacheError.message}`);
+    }
   }
   
   return results;

@@ -2383,4 +2383,19 @@ const StudentDetail = ({ student, data, setData, onBack, isBatch = false, initia
     `;
 };
 
-render(html`<${App} />`, document.getElementById('app'));
+try {
+    render(html`<${App} />`, document.getElementById('app'));
+} catch (error) {
+    console.error('App render failed:', error);
+    const root = document.getElementById('app');
+    if (root) {
+        root.innerHTML = `
+            <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:#f8fafc;font-family:Inter,sans-serif;">
+                <div style="max-width:760px;width:100%;background:#fff;border:1px solid #fecaca;border-radius:16px;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,0.08);">
+                    <h1 style="margin:0 0 12px;font-size:20px;font-weight:800;color:#991b1b;">Application Failed To Render</h1>
+                    <pre style="margin:0;white-space:pre-wrap;word-break:break-word;background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:16px;color:#9a3412;font-size:12px;overflow:auto;">${error?.stack || error?.message || String(error)}</pre>
+                </div>
+            </div>
+        `;
+    }
+}

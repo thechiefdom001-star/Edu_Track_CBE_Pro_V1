@@ -11,6 +11,31 @@
             if (args[0] && typeof args[0] === 'string' && args[0].includes('cdn.tailwindcss.com should not be used in production')) return;
             originalWarn.apply(console, args);
         };
+
+        function showStartupError(title, details) {
+            const app = document.getElementById('app');
+            if (!app) return;
+            app.innerHTML = `
+                <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:#f8fafc;font-family:Inter,sans-serif;">
+                    <div style="max-width:760px;width:100%;background:#fff;border:1px solid #fecaca;border-radius:16px;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,0.08);">
+                        <h1 style="margin:0 0 12px;font-size:20px;font-weight:800;color:#991b1b;">${title}</h1>
+                        <p style="margin:0 0 12px;color:#7f1d1d;font-size:14px;">The app hit an error before it could finish loading.</p>
+                        <pre style="margin:0;white-space:pre-wrap;word-break:break-word;background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:16px;color:#9a3412;font-size:12px;overflow:auto;">${details}</pre>
+                    </div>
+                </div>
+            `;
+        }
+
+        window.addEventListener('error', function (event) {
+            const details = event?.error?.stack || event?.message || 'Unknown startup error';
+            showStartupError('Application Failed To Start', details);
+        });
+
+        window.addEventListener('unhandledrejection', function (event) {
+            const reason = event?.reason;
+            const details = reason?.stack || reason?.message || String(reason || 'Unknown promise rejection');
+            showStartupError('Application Failed To Start', details);
+        });
     </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="importmap">

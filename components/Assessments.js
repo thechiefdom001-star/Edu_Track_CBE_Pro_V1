@@ -126,6 +126,22 @@ export const Assessments = ({ data, setData, isAdmin, teacherSession, allowedSub
             setSelectedSubject('');
         }
     }, [selectedGrade, subjects]);
+
+    useEffect(() => {
+        const academicYear = data.settings?.academicYear || '2025/2026';
+        const matchingAssessments = (data.assessments || []).filter(a =>
+            a.grade === selectedGrade &&
+            a.subject === selectedSubject &&
+            a.term === selectedTerm &&
+            a.examType === selectedExamType &&
+            a.academicYear === academicYear
+        );
+
+        const storedMaxScore = matchingAssessments.find(a => Number(a.maxScore) > 0)?.maxScore;
+        if (storedMaxScore && Number(storedMaxScore) !== Number(examTotal)) {
+            setExamTotal(Number(storedMaxScore));
+        }
+    }, [data.assessments, data.settings?.academicYear, examTotal, selectedExamType, selectedGrade, selectedSubject, selectedTerm]);
     
     const filteredStudents = (data?.students || []).filter(s => {
         // Case-insensitive grade matching
@@ -399,13 +415,23 @@ export const Assessments = ({ data, setData, isAdmin, teacherSession, allowedSub
                     // Normalize the remote assessment
                     const normalizedRemote = {
                         ...remote,
+                        score: Number(remote.score),
+                        rawScore: remote.rawScore !== undefined && remote.rawScore !== '' ? Number(remote.rawScore) : undefined,
+                        maxScore: remote.maxScore !== undefined && remote.maxScore !== '' ? Number(remote.maxScore) : 100,
                         studentId: String(remote.studentId || ''),
                         studentAdmissionNo: remote.studentAdmissionNo || '',
                         studentName: remote.studentName || ''
                     };
+
+                    if (!Number.isFinite(normalizedRemote.score)) {
+                        return;
+                    }
+                    if (!Number.isFinite(normalizedRemote.rawScore) && Number.isFinite(normalizedRemote.score)) {
+                        normalizedRemote.rawScore = Math.round((normalizedRemote.score / 100) * normalizedRemote.maxScore);
+                    }
                     
                     // Check if this assessment already exists locally
-                    const exists = mergedAssessments.some(a => 
+                    const existingIndex = mergedAssessments.findIndex(a => 
                         a.id === normalizedRemote.id ||
                         // Match by composite key with flexible ID matching
                         ((
@@ -418,55 +444,60 @@ export const Assessments = ({ data, setData, isAdmin, teacherSession, allowedSub
                          a.examType === normalizedRemote.examType &&
                          a.academicYear === normalizedRemote.academicYear)
                     );
-                    if (!exists) {
-                        // Try to match with local students using multiple strategies
-                        let matchedStudent = null;
-                        
-                        // Strategy 1: Match by studentId
-                        if (normalizedRemote.studentId) {
-                            matchedStudent = localStudents.find(s => 
-                                String(s.id) === normalizedRemote.studentId ||
-                                String(s.id) === String(Number(normalizedRemote.studentId))
-                            );
+                    
+                    // Try to match with local students using multiple strategies
+                    let matchedStudent = null;
+                    
+                    // Strategy 1: Match by studentId
+                    if (normalizedRemote.studentId) {
+                        matchedStudent = localStudents.find(s => 
+                            String(s.id) === normalizedRemote.studentId ||
+                            String(s.id) === String(Number(normalizedRemote.studentId))
+                        );
+                    }
+                    
+                    // Strategy 2: Match by admission number
+                    if (!matchedStudent && normalizedRemote.studentAdmissionNo) {
+                        matchedStudent = localStudents.find(s => 
+                            s.admissionNo && 
+                            String(s.admissionNo).toLowerCase() === normalizedRemote.studentAdmissionNo.toLowerCase()
+                        );
+                    }
+                    
+                    // Strategy 3: Match by name
+                    if (!matchedStudent && normalizedRemote.studentName) {
+                        matchedStudent = localStudents.find(s => 
+                            s.name && 
+                            s.name.toLowerCase().trim() === normalizedRemote.studentName.toLowerCase().trim()
+                        );
+                    }
+                    
+                    // Strategy 4: Match by grade + subject + term + exam (if studentId is empty but other data matches)
+                    if (!matchedStudent && !normalizedRemote.studentId && !normalizedRemote.studentAdmissionNo) {
+                        const existingByMatch = mergedAssessments.find(a =>
+                            a.subject === normalizedRemote.subject &&
+                            a.term === normalizedRemote.term &&
+                            a.examType === normalizedRemote.examType &&
+                            a.academicYear === normalizedRemote.academicYear
+                        );
+                        if (existingByMatch) {
+                            normalizedRemote.studentId = existingByMatch.studentId;
+                            normalizedRemote.studentAdmissionNo = existingByMatch.studentAdmissionNo || '';
                         }
-                        
-                        // Strategy 2: Match by admission number
-                        if (!matchedStudent && normalizedRemote.studentAdmissionNo) {
-                            matchedStudent = localStudents.find(s => 
-                                s.admissionNo && 
-                                String(s.admissionNo).toLowerCase() === normalizedRemote.studentAdmissionNo.toLowerCase()
-                            );
-                        }
-                        
-                        // Strategy 3: Match by name
-                        if (!matchedStudent && normalizedRemote.studentName) {
-                            matchedStudent = localStudents.find(s => 
-                                s.name && 
-                                s.name.toLowerCase().trim() === normalizedRemote.studentName.toLowerCase().trim()
-                            );
-                        }
-                        
-                        // Strategy 4: Match by grade + subject + term + exam (if studentId is empty but other data matches)
-                        if (!matchedStudent && !normalizedRemote.studentId && !normalizedRemote.studentAdmissionNo) {
-                            // Try to find by exact match on other fields
-                            const existingByMatch = mergedAssessments.find(a =>
-                                a.subject === normalizedRemote.subject &&
-                                a.term === normalizedRemote.term &&
-                                a.examType === normalizedRemote.examType &&
-                                a.academicYear === normalizedRemote.academicYear
-                            );
-                            if (existingByMatch) {
-                                normalizedRemote.studentId = existingByMatch.studentId;
-                                normalizedRemote.studentAdmissionNo = existingByMatch.studentAdmissionNo || '';
-                            }
-                        }
-                        
-                        mergedAssessments.push({
-                            ...normalizedRemote,
-                            studentId: matchedStudent?.id || normalizedRemote.studentId || '',
-                            studentAdmissionNo: matchedStudent?.admissionNo || normalizedRemote.studentAdmissionNo || '',
-                            studentName: matchedStudent?.name || normalizedRemote.studentName || 'Unknown'
-                        });
+                    }
+
+                    const mergedAssessment = {
+                        ...(existingIndex >= 0 ? mergedAssessments[existingIndex] : {}),
+                        ...normalizedRemote,
+                        studentId: matchedStudent?.id || normalizedRemote.studentId || '',
+                        studentAdmissionNo: matchedStudent?.admissionNo || normalizedRemote.studentAdmissionNo || '',
+                        studentName: matchedStudent?.name || normalizedRemote.studentName || 'Unknown'
+                    };
+
+                    if (existingIndex >= 0) {
+                        mergedAssessments[existingIndex] = mergedAssessment;
+                    } else {
+                        mergedAssessments.push(mergedAssessment);
                         addedCount++;
                     }
                 });
