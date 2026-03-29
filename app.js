@@ -155,7 +155,6 @@ const App = () => {
     const [loginUsername, setLoginUsername] = useState('');
     const [loginPassword, setLoginPassword] = useState('');
     const [showLoginModal, setShowLoginModal] = useState(false);
-    const [isSyncing, setIsSyncing] = useState(false);
     const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
     const [googleSyncStatus, setGoogleSyncStatus] = useState('');
     const [showForcePushModal, setShowForcePushModal] = useState(false);
@@ -356,20 +355,6 @@ const App = () => {
         };
     }, [data?.settings?.googleScriptUrl, deviceId, isAdmin, teacherSession]);
 
-
-    const handleCloudPush = async () => {
-        const ws = window.websim || websim;
-        if (!ws) {
-            alert("Cloud services are currently unavailable. Please try refreshing the page.");
-            return;
-        }
-        setIsSyncing(true);
-        const result = await Storage.pushToCloud(data);
-        if (result && result.error) {
-            alert("Cloud sync failed: " + result.error);
-        }
-        setIsSyncing(false);
-    };
 
     // Sync lock to prevent concurrent syncs causing data multiplication
     const [syncLock, setSyncLock] = useState(false);
@@ -1233,17 +1218,6 @@ const App = () => {
                 </div>
                 
                 <div class="flex items-center gap-3">
-                    <button 
-                        onClick=${handleCloudPush}
-                        class=${`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all border ${isSyncing
-            ? 'bg-blue-50 border-blue-200 text-blue-600 animate-pulse'
-            : 'bg-slate-50 border-slate-100 text-slate-500 hover:border-primary hover:text-primary'
-        }`}
-                    >
-                        <span class=${isSyncing ? 'animate-spin' : ''}>${isSyncing ? '⏳' : '☁️'}</span>
-                        <span class="hidden sm:inline">${isSyncing ? 'Syncing...' : 'Cloud Sync'}</span>
-                    </button>
-
                     <button 
                         onClick=${() => {
                             if (!data.settings.googleScriptUrl) {
