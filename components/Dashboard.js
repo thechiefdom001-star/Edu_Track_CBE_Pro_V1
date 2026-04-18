@@ -232,13 +232,17 @@ export const Dashboard = ({ data, setData, googleSyncStatus, isAdmin, teacherSes
         return () => clearInterval(refreshInterval);
     }, [settings.googleScriptUrl]);
 
-    const totalStudents = students.length;
+    // FIXED: Filter out inactive students (status = 'left') from dashboard counts
+    const activeStudents = students.filter(s => (s.status || 'active') === 'active');
+    const inactiveStudents = students.filter(s => s.status === 'left');
+    
+    const totalStudents = activeStudents.length;
     const totalTeachers = (data?.teachers || []).length;
     const totalStaff = (data?.staff || []).length;
     const totalFeesCollected = payments
         .filter(p => !p.voided)
         .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-    const expectedFees = students.reduce((sum, s) => {
+    const expectedFees = activeStudents.reduce((sum, s) => {
         const fin = Storage.getStudentFinancials(s, payments, settings);
         return sum + fin.totalDue;
     }, 0);
@@ -246,7 +250,7 @@ export const Dashboard = ({ data, setData, googleSyncStatus, isAdmin, teacherSes
     const feePercentage = expectedFees > 0 ? (totalFeesCollected / expectedFees) * 100 : 0;
 
     const feesPerGrade = (settings.grades || []).map(grade => {
-        const gradeStudentIds = students.filter(s => s.grade === grade).map(s => s.id);
+        const gradeStudentIds = activeStudents.filter(s => s.grade === grade).map(s => s.id);
         const total = payments
             .filter(p => gradeStudentIds.includes(p.studentId) && !p.voided)
             .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
@@ -255,7 +259,7 @@ export const Dashboard = ({ data, setData, googleSyncStatus, isAdmin, teacherSes
     const maxGradeFee = Math.max(...feesPerGrade.map(f => f.total), 1);
 
     const assessmentActivity = (settings.grades || []).map(grade => {
-        const gradeStudents = students.filter(s => s.grade === grade);
+        const gradeStudents = activeStudents.filter(s => s.grade === grade);
         const totalEnrolled = gradeStudents.length;
         
         const gradeStudentIds = new Set(gradeStudents.map(s => String(s.id)));
@@ -366,7 +370,7 @@ export const Dashboard = ({ data, setData, googleSyncStatus, isAdmin, teacherSes
 
             <!-- Horizontally scrollable panels on mobile -->
             <div class="flex overflow-x-auto no-scrollbar md:grid md:grid-cols-3 lg:grid-cols-6 gap-3 md:gap-4 pb-4 -mx-4 px-4 md:mx-0 md:px-0">
-                <div class="min-w-[160px] md:min-w-0 flex-1"><${StatCard} title="Students" value=${totalStudents} subtitle="Enrollment" icon="👥" color="blue" /></div>
+                <div class="min-w-[160px] md:min-w-0 flex-1"><${StatCard} title="Students" value=${totalStudents} subtitle=${inactiveStudents.length > 0 ? `Enrollment (+${inactiveStudents.length} left)` : "Enrollment"} icon="👥" color="blue" /></div>
                 <div class="min-w-[160px] md:min-w-0 flex-1"><${StatCard} title="Teachers" value=${totalTeachers} subtitle="Academic" icon="👨‍🏫" color="orange" /></div>
                 <div class="min-w-[160px] md:min-w-0 flex-1"><${StatCard} title="Staff" value=${totalStaff} subtitle="Support" icon="🛠️" color="cyan" /></div>
                 <div class="min-w-[160px] md:min-w-0 flex-1"><${StatCard} title="Paid" value=${`${settings.currency} ${totalFeesCollected.toLocaleString()}`} subtitle=${`${feePercentage.toFixed(1)}% Target`} icon="💰" color="green" /></div>
@@ -425,8 +429,8 @@ export const Dashboard = ({ data, setData, googleSyncStatus, isAdmin, teacherSes
                         <!-- Bars -->
                         <div class="absolute inset-0 flex items-end justify-between gap-1 px-1">
                             ${(settings.grades || []).map((grade, index) => {
-        const count = students.filter(s => s.grade === grade).length;
-        const maxCount = Math.max(...settings.grades.map(g => students.filter(s => s.grade === g).length), 1);
+        const count = activeStudents.filter(s => s.grade === grade).length;
+        const maxCount = Math.max(...settings.grades.map(g => activeStudents.filter(s => s.grade === g).length), 1);
         const heightPct = (count / maxCount) * 100;
         const colors = ['bg-blue-400', 'bg-green-400', 'bg-purple-400', 'bg-orange-400', 'bg-pink-400', 'bg-yellow-400', 'bg-cyan-400', 'bg-indigo-400'];
         const color = colors[index % colors.length];
