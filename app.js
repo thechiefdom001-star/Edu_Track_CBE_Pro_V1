@@ -21,6 +21,9 @@ import { Settings } from './components/Settings.js';
 import { Attendance } from './components/Attendance.js';
 import { Sidebar } from './components/Sidebar.js';
 import { TeacherAuth } from './components/TeacherAuth.js';
+import { ParentAuth } from './components/ParentAuth.js';
+import { ParentsDashboard } from './components/ParentsDashboard.js';
+import { SchoolCalendar } from './components/SchoolCalendar.js';
 import { PrintButtons } from './components/PrintButtons.js';
 import { Storage } from './lib/storage.js';
 import { googleSheetSync } from './lib/googleSheetSync.js';
@@ -41,6 +44,9 @@ const App = () => {
         console.log('[App] Loading data from localStorage - Students:', currentData.students?.length || 0, 'Assessments:', currentData.assessments?.length || 0);
         // Always load data, even if students array is empty
         setData(currentData);
+        
+        // Expose sync to window for components
+        window.googleSync = googleSheetSync;
     }, []);
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -53,9 +59,20 @@ const App = () => {
         return saved ? JSON.parse(saved) : null;
     });
     const [showTeacherAuth, setShowTeacherAuth] = useState(false);
+    const [parentSession, setParentSession] = useState(() => {
+        const saved = localStorage.getItem('et_parent_session');
+        return saved ? JSON.parse(saved) : null;
+    });
+    const [showParentAuth, setShowParentAuth] = useState(false);
+
+    useEffect(() => {
+        const handler = () => setShowParentAuth(true);
+        window.addEventListener('edutrack:open-parent-login', handler);
+        return () => window.removeEventListener('edutrack:open-parent-login', handler);
+    }, []);
     
     // Derived authentication state
-    const isAuthenticated = isAdmin || teacherSession;
+    const isAuthenticated = isAdmin || teacherSession || parentSession;
     
     // Enrich teacher session with details from teacher records if available
     const activeTeacher = teacherSession ? (data.teachers || []).find(t => 
@@ -883,6 +900,14 @@ const App = () => {
         console.log('Teacher logged in:', teacherData.username);
     };
 
+    const handleParentLogin = (parentData) => {
+        setParentSession(parentData);
+        localStorage.setItem('et_parent_session', JSON.stringify(parentData));
+        setShowParentAuth(false);
+        setView('parents-dashboard');
+        console.log('Parent logged in for:', parentData.admissionNo);
+    };
+
     const handleLogout = () => {
         // Create new session ID for next login
         const newSessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -899,6 +924,11 @@ const App = () => {
         if (teacherSession) {
             setTeacherSession(null);
             localStorage.removeItem('et_teacher_session');
+        }
+
+        if (parentSession) {
+            setParentSession(null);
+            localStorage.removeItem('et_parent_session');
         }
         
         // Dispatch logout event
@@ -1102,7 +1132,9 @@ const App = () => {
             case 'archives': return html`<${Archives} data=${data} />`;
             case 'settings': return html`<${Settings} data=${data} setData=${setData} />`;
             case 'student-detail': return html`<${StudentDetail} student=${selectedStudent} data=${data} setData=${setData} onBack=${() => setView('students')} isAdmin=${isAdmin} teacherSession=${teacherSession} />`;
-            default: return html`<${Dashboard} data=${data} setData=${setData} googleSyncStatus=${googleSyncStatus} isAdmin=${isAdmin} teacherSession=${teacherSession} />`;
+            case 'parents-dashboard': return html`<${ParentsDashboard} data=${data} parentSession=${parentSession} />`;
+            case 'school-calendar': return html`<${SchoolCalendar} data=${data} isAdmin=${isAdmin} />`;
+            default: return html`<${Dashboard} data=${data} setData=${setData} googleSyncStatus=${googleSyncStatus} isAdmin=${isAdmin} teacherSession=${teacherSession} parentSession=${parentSession} />`;
         }
     };
 
@@ -1310,7 +1342,9 @@ const App = () => {
                     setIsMobileOpen=${setIsMobileMenuOpen}
                     isAdmin=${isAdmin}
                     teacherSession=${teacherSession}
+                    parentSession=${parentSession}
                     onOpenAuth=${openTeacherAuth}
+                    onOpenParentAuth=${() => setShowParentAuth(true)}
                 />
                 <main class="flex-1 overflow-y-auto no-scrollbar pb-20 md:pb-0">
                     <div class="max-w-6xl mx-auto p-4 md:p-8">
@@ -1327,6 +1361,12 @@ const App = () => {
                                         class="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2"
                                     >
                                         <span>👩‍🏫</span> Teacher Login
+                                    </button>
+                                    <button 
+                                        onClick=${() => setShowParentAuth(true)} 
+                                        class="bg-orange-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2"
+                                    >
+                                        <span>👪</span> Parent Login
                                     </button>
                                     <button 
                                         onClick=${() => setShowLoginModal(true)} 
@@ -1394,6 +1434,14 @@ const App = () => {
                     setData=${setData}
                     onLogin=${handleTeacherLogin}
                     onClose=${() => setShowTeacherAuth(false)}
+                />
+            `}
+
+            <!-- Parent Authentication Modal -->
+            ${showParentAuth && html`
+                <${ParentAuth} 
+                    onLogin=${handleParentLogin}
+                    onClose=${() => setShowParentAuth(false)}
                 />
             `}
 

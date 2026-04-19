@@ -39,7 +39,9 @@ const SHEET_NAMES = {
   TEACHER_CREDENTIALS: 'TeacherCredentials',  // For teacher login credentials
   ACTIVITY_LOG: 'ActivityLog',  // For logging all user activities
   BACKUP_METADATA: 'Backup_Metadata',  // Track backups
-  SYNC_STATUS: 'SyncStatus'  // Track sync operations
+  SYNC_STATUS: 'SyncStatus',  // Track sync operations
+  PARENTS: 'Parents',
+  CALENDAR: 'Calendar'
 };
 
 // Rate limiting configuration
@@ -81,6 +83,8 @@ const TEACHER_CREDENTIALS_HEADERS = ['username', 'passwordHash', 'teacherId', 'n
 const ACTIVITY_LOG_HEADERS = ['id', 'userId', 'userName', 'userRole', 'action', 'module', 'recordId', 'recordName', 'details', 'timestamp', 'ipAddress'];
 const BACKUP_METADATA_HEADERS = ['backupName', 'sheetName', 'createdAt', 'recordCount'];
 const SYNC_STATUS_HEADERS = ['lastSyncTime', 'syncType', 'recordCount', 'status', 'errorMessage'];
+const PARENT_HEADERS = ['id', 'admissionNo', 'name', 'contact', 'email', 'createdAt', 'lastLogin'];
+const CALENDAR_HEADERS = ['id', 'title', 'start', 'end', 'type', 'details', 'term', 'academicYear'];
 
 // Cache for frequently accessed data
 const dataCache = CacheService.getScriptCache();
@@ -111,7 +115,9 @@ function initializeSheets() {
     { name: SHEET_NAMES.TEACHER_CREDENTIALS, headers: TEACHER_CREDENTIALS_HEADERS },
     { name: SHEET_NAMES.ACTIVITY_LOG, headers: ACTIVITY_LOG_HEADERS },
     { name: SHEET_NAMES.BACKUP_METADATA, headers: BACKUP_METADATA_HEADERS },
-    { name: SHEET_NAMES.SYNC_STATUS, headers: SYNC_STATUS_HEADERS }
+    { name: SHEET_NAMES.SYNC_STATUS, headers: SYNC_STATUS_HEADERS },
+    { name: SHEET_NAMES.PARENTS, headers: PARENT_HEADERS },
+    { name: SHEET_NAMES.CALENDAR, headers: CALENDAR_HEADERS }
   ];
   
   sheetsConfig.forEach(config => {
@@ -1148,6 +1154,105 @@ function deleteTeacherAccount(username) {
   
   return { success: false, error: 'Account not found' };
 }
+
+function loginParent(admissionNo, studentName) {
+  if (!admissionNo || !studentName) {
+    return { success: false, error: 'Both student name and admission number are required' };
+  }
+  
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const studentSheet = ss.getSheetByName(SHEET_NAMES.STUDENTS);
+  
+  if (!studentSheet) {
+    return { success: false, error: 'Students data not found' };
+  }
+  
+  const data = studentSheet.getDataRange().getValues();
+  if (data.length < 2) return { success: false, error: 'No students found' };
+  
+  const headers = data[0].map(h => String(h || '').trim());
+  const admIndex = headers.indexOf('admissionNo');
+  
+  if (admIndex === -1) {
+    // Fallback to searching all columns if header not exact match
+    return { success: false, error: 'Admission system column error' };
+  }
+  
+  const nameIndex = headers.indexOf('name');
+  const idIndex = headers.indexOf('id');
+  const parentIndex = headers.indexOf('parentContact');
+  
+  for (let i = 1; i < data.length; i++) {
+    const storedAdmNo = String(data[i][admIndex] || '').trim();
+    const storedName = String(data[i][nameIndex >= 0 ? nameIndex : 1] || '').trim();
+    
+    const isAdmMatch = storedAdmNo.toLowerCase() === admissionNo.toLowerCase().trim();
+    const isNameMatch = storedName.toLowerCase().includes(studentName.toLowerCase().trim()) || 
+                      studentName.toLowerCase().trim().includes(storedName.toLowerCase());
+                      
+    if (isAdmMatch && isNameMatch) {
+      const studentNameResult = storedName;
+      const studentId = String(data[i][idIndex >= 0 ? idIndex : 0] || '');
+      const parentName = String(data[i][parentIndex >= 0 ? parentIndex : 8] || 'Parent of ' + studentNameResult);
+      
+      // Update or add to Parents sheet for tracking
+      let parentSheet = ss.getSheetByName(SHEET_NAMES.PARENTS);
+      if (!parentSheet) {
+        parentSheet = ss.insertSheet(SHEET_NAMES.PARENTS);
+        parentSheet.appendRow(PARENT_HEADERS);
+      }
+      
+      const parentsData = parentSheet.getDataRange().getValues();
+      let parentRow = -1;
+      const pAdmIndex = PARENT_HEADERS.indexOf('admissionNo');
+      
+      for (let j = 1; j < parentsData.length; j++) {
+        if (String(parentsData[j][pAdmIndex]).trim().toLowerCase() === admissionNo.toLowerCase().trim()) {
+          parentRow = j + 1;
+          break;
+        }
+      }
+      
+      const now = new Date().toISOString();
+      if (parentRow > 0) {
+        parentSheet.getRange(parentRow, PARENT_HEADERS.indexOf('lastLogin') + 1).setValue(now);
+      } else {
+        const newParentRow = PARENT_HEADERS.map(h => {
+          if (h === 'id') return 'PAR-' + Date.now();
+          if (h === 'admissionNo') return admissionNo;
+          if (h === 'name') return parentName;
+          if (h === 'createdAt') return now;
+          if (h === 'lastLogin') return now;
+          return '';
+        });
+        parentSheet.appendRow(newParentRow);
+      }
+
+      // Log parent login
+      logUserActivity({
+        userId: admissionNo,
+        userName: parentName,
+        userRole: 'parent',
+        action: 'LOGIN',
+        module: 'Parent Portal',
+        details: `Parent logged in matching: ${studentNameResult} (${admissionNo})`
+      });
+
+      return {
+        success: true,
+        message: 'Login successful',
+        admissionNo: storedAdmNo,
+        studentName: studentNameResult,
+        studentId: studentId,
+        parentName: parentName,
+        role: 'parent'
+      };
+    }
+  }
+  
+  return { success: false, error: 'Validation failed: Student name or admission number does not match.' };
+}
+
 
 // ==================== BACKUP SYSTEM ====================
 
@@ -2685,6 +2790,10 @@ function doGet(e) {
       case 'DELETE_MATRIX':
         response = processMatrixRequest('DELETE_MATRIX', null, null, null, e?.parameter?.sheetName);
         break;
+
+      case 'loginParent':
+        response = loginParent(e?.parameter?.admissionNo, e?.parameter?.studentName);
+        break;
         
       default:
         response = { success: false, error: 'Unknown action: ' + action };
@@ -2950,7 +3059,9 @@ function doPost(e) {
           attendance: getAllRecords(SHEET_NAMES.ATTENDANCE, ATTENDANCE_HEADERS),
           teachers: getAllRecords(SHEET_NAMES.TEACHERS, TEACHER_HEADERS),
           staff: getAllRecords(SHEET_NAMES.STAFF, STAFF_HEADERS),
-          payments: getAllRecords(SHEET_NAMES.PAYMENTS, PAYMENT_HEADERS)
+          payments: getAllRecords(SHEET_NAMES.PAYMENTS, PAYMENT_HEADERS),
+          parents: getAllRecords(SHEET_NAMES.PARENTS, PARENT_HEADERS),
+          calendar: getAllRecords(SHEET_NAMES.CALENDAR, CALENDAR_HEADERS)
         };
         break;
         
@@ -2973,6 +3084,10 @@ function doPost(e) {
           username: data.username,
           password: data.password
         });
+        break;
+
+      case 'loginParent':
+        response = loginParent(data.admissionNo, data.studentName);
         break;
         
       case 'getTeacherCredentials':
