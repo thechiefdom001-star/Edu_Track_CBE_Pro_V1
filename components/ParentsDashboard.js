@@ -1,10 +1,11 @@
 import { h } from 'preact';
 import { useState, useMemo } from 'preact/hooks';
 import htm from 'htm';
+import { StudentDetail } from './StudentDetail.js';
 
 const html = htm.bind(h);
 
-export const ParentsDashboard = ({ data, parentSession }) => {
+export const ParentsDashboard = ({ data, parentSession, setData }) => {
     const [activeTab, setActiveTab] = useState('overview');
 
     if (!parentSession) {
@@ -47,13 +48,28 @@ export const ParentsDashboard = ({ data, parentSession }) => {
 
     // Calculate fee balance
     const feeInfo = useMemo(() => {
-        if (!student) return { totalPaid: 0, balance: 0 };
-        const totalPaid = payments.filter(p => !p.voided).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+        if (!student || !data.settings.feeStructures) return { totalPaid: 0, balance: 0 };
+        const paymentsForStudent = payments.filter(p => !p.voided);
+        const totalPaid = paymentsForStudent.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
         
-        // This is a simplified calculation, normally you'd fetch student's total required fees
-        // For now, let's just show what they've paid
-        return { totalPaid, balance: 'Refer to school office' };
-    }, [payments, student]);
+        const feeStructure = data.settings.feeStructures.find(f => f.grade === student.grade);
+        const previousArrears = Number(student.previousArrears) || 0;
+        
+        let selectedKeys;
+        if (typeof student.selectedFees === 'string') {
+            selectedKeys = student.selectedFees.split(',').map(f => f.trim()).filter(f => f);
+        } else if (Array.isArray(student.selectedFees)) {
+            selectedKeys = student.selectedFees;
+        } else {
+            selectedKeys = ['t1', 't2', 't3'];
+        }
+
+        const currentFeesDue = feeStructure ? selectedKeys.reduce((sum, key) => sum + (feeStructure[key] || 0), 0) : 0;
+        const totalDue = previousArrears + currentFeesDue;
+        const balance = totalDue - totalPaid;
+
+        return { totalPaid, balance };
+    }, [payments, student, data.settings.feeStructures]);
 
     const renderOverview = () => html`
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -83,11 +99,16 @@ export const ParentsDashboard = ({ data, parentSession }) => {
                 <div class="flex justify-between items-start mb-4">
                     <div>
                         <p class="text-xs font-black text-slate-500 uppercase tracking-widest">Fees Status</p>
-                        <h3 class="text-2xl font-black text-slate-900 dark:text-white mt-1">KES ${feeInfo.totalPaid.toLocaleString()}</h3>
+                        <h3 class="text-2xl font-black text-slate-900 dark:text-white mt-1">${data.settings.currency || 'KES'} ${feeInfo.totalPaid.toLocaleString()}</h3>
                     </div>
                     <span class="bg-green-500/10 text-green-500 p-2 rounded-xl text-xl">💰</span>
                 </div>
-                <p class="text-sm text-slate-500 mb-6">Total fees paid this academic year.</p>
+                <div class="flex justify-between items-center mb-4 text-sm">
+                    <span class="text-slate-500">Balance:</span>
+                    <span class=${`font-black ${feeInfo.balance > 0 ? 'text-red-500' : 'text-green-500'}`}>
+                        ${data.settings.currency || 'KES'} ${feeInfo.balance.toLocaleString()}
+                    </span>
+                </div>
                 <button class="w-full py-3 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors uppercase tracking-wider">
                     View Statements
                 </button>
@@ -105,8 +126,8 @@ export const ParentsDashboard = ({ data, parentSession }) => {
                     <span class="bg-orange-500/10 text-orange-500 p-2 rounded-xl text-xl">📝</span>
                 </div>
                 <p class="text-sm text-slate-500 mb-6 font-medium">Performance summary for the current term.</p>
-                <button onClick=${() => setActiveTab('results')} class="w-full py-3 bg-orange-600 text-white rounded-xl text-xs font-bold hover:bg-orange-700 transition-colors uppercase tracking-wider shadow-lg shadow-orange-600/20">
-                    View Full Results
+                <button onClick=${() => setActiveTab('report')} class="w-full py-3 bg-orange-600 text-white rounded-xl text-xs font-bold hover:bg-orange-700 transition-colors uppercase tracking-wider shadow-lg shadow-orange-600/20">
+                    View Official Report
                 </button>
             </div>
         </div>
@@ -133,7 +154,7 @@ export const ParentsDashboard = ({ data, parentSession }) => {
                             <tr class="hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
                                 <td class="px-6 py-4 font-bold text-sm text-slate-900 dark:text-white">${p.receiptNo || 'N/A'}</td>
                                 <td class="px-6 py-4 text-slate-500 text-sm">${p.date}</td>
-                                <td class="px-6 py-4 font-black text-sm text-green-600">KES ${Number(p.amount).toLocaleString()}</td>
+                                <td class="px-6 py-4 font-black text-sm text-green-600">${data.settings.currency || 'KES'} ${Number(p.amount).toLocaleString()}</td>
                                 <td class="px-6 py-4">
                                     <span class="bg-blue-500/10 text-blue-500 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider">
                                         ${p.method || 'M-PESA'}
@@ -190,30 +211,52 @@ export const ParentsDashboard = ({ data, parentSession }) => {
         `;
     };
 
+    const renderReport = () => {
+        if (!student) return html`<div>Student data not available.</div>`;
+        return html`
+            <div class="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-xl border border-slate-100 dark:border-slate-800">
+                <${StudentDetail} 
+                    student=${student} 
+                    data=${data} 
+                    setData=${setData} 
+                    onBack=${() => setActiveTab('overview')} 
+                    isAdmin=${false} 
+                    isBatch=${true}
+                />
+            </div>
+        `;
+    };
+
     return html`
         <div class="animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <header class="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+            <header class="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 no-print">
                 <div>
                     <h1 class="text-4xl font-black text-slate-900 dark:text-white tracking-tight">Parent <span class="text-orange-600">Portal</span></h1>
                     <p class="text-slate-500 font-medium">Welcome back, ${parentSession.parentName}</p>
                 </div>
-                <div class="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl w-fit self-start md:self-center shadow-inner">
+                <div class="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl w-fit self-start md:self-center shadow-inner overflow-x-auto no-scrollbar">
                     <button 
                         onClick=${() => setActiveTab('overview')}
-                        class=${`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'overview' ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-md' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'}`}
+                        class=${`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${activeTab === 'overview' ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-md' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'}`}
                     >
                         Overview
                     </button>
                     <button 
                         onClick=${() => setActiveTab('results')}
-                        class=${`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'results' ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-md' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'}`}
+                        class=${`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${activeTab === 'results' ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-md' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'}`}
                     >
-                        Results
+                        Results Summary
+                    </button>
+                    <button 
+                        onClick=${() => setActiveTab('report')}
+                        class=${`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${activeTab === 'report' ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-md' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'}`}
+                    >
+                        Actual Report Form
                     </button>
                 </div>
             </header>
 
-            ${activeTab === 'overview' ? renderOverview() : renderResults()}
+            ${activeTab === 'overview' ? renderOverview() : (activeTab === 'results' ? renderResults() : renderReport())}
         </div>
     `;
 };
